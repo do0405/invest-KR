@@ -18,3 +18,13 @@ python3 download_ohlcv.py
 The script requires the [`pykrx`](https://github.com/sharebook-kr/pykrx)
 package. If the package is not installed, the script will attempt to
 install it using `pip`.
+
+## Running screeners
+
+After downloading data, you can run `screeners.py` to filter stocks
+according to two predefined strategies. The results are saved inside the
+`result` directory as both CSV and JSON files.
+
+```bash
+python3 screeners.py
+```
