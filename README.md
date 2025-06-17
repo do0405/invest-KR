@@ -21,10 +21,23 @@ install it using `pip`.
 
 ## Running screeners
 
-After downloading data, you can run `screeners.py` to filter stocks
-according to two predefined strategies. The results are saved inside the
-`result` directory as both CSV and JSON files.
+After downloading data you can execute each screener separately. The
+results are written to the `result` directory in both CSV and JSON format.
+
+Run the setup screener:
 
 ```bash
-python3 screeners.py
+python3 setup_screener.py
+```
+
+Run the Mark Minervini screener:
+
+```bash
+python3 minervini_screener.py
+```
+
+You can also run both at once using `run_screeners.py`:
+
+```bash
+python3 run_screeners.py
 ```
