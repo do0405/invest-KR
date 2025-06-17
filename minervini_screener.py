@@ -8,13 +8,13 @@ from typing import Any
 
 import pandas as pd
 
-from screener_utils import ensure_pykrx, load_market_caps, relative_strength
+from screener_utils import ensure_pykrx, load_market_caps, relative_strength, get_ticker_name, calculate_raw_rs
 
 DATA_DIR = "data"
 RESULT_DIR = "result"
 
 
-def minervini_screener(df: pd.DataFrame) -> bool:
+def minervini_screener(df: pd.DataFrame, ticker: str = None) -> bool:
     """Return ``True`` if ``df`` meets Mark Minervini criteria."""
     if len(df) < 252:
         return False
@@ -44,7 +44,9 @@ def minervini_screener(df: pd.DataFrame) -> bool:
     if price < high52 * 0.75:
         return False
 
-    if relative_strength(df) < 70:
+    # RS 점수가 85점 미만이면 필터링
+    from screener_utils import relative_strength
+    if relative_strength(df, ticker) < 85:  # 85점 이상만 통과, ticker 파라미터 추가
         return False
 
     return True
@@ -56,6 +58,10 @@ def run() -> None:
 
     today = datetime.today()
     caps = load_market_caps(today)  # not strictly needed but maybe useful
+
+    # 모든 종목의 RS 점수 계산
+    from screener_utils import calculate_all_rs_scores
+    calculate_all_rs_scores()
 
     rows: list[dict[str, Any]] = []
 
@@ -72,13 +78,17 @@ def run() -> None:
         if df.empty:
             continue
 
-        if minervini_screener(df):
-            rows.append({"ticker": ticker, "relative_strength": relative_strength(df)})
+        if minervini_screener(df, ticker):  # ticker 파라미터 전달
+            rows.append({
+                "ticker": ticker, 
+                "name": get_ticker_name(ticker),
+                "relative_strength": relative_strength(df, ticker)
+            })
 
     os.makedirs(RESULT_DIR, exist_ok=True)
 
     result_df = pd.DataFrame(rows).sort_values("relative_strength", ascending=False)
-    result_df.to_csv(os.path.join(RESULT_DIR, "minervini_screener.csv"), index=False)
+    result_df.to_csv(os.path.join(RESULT_DIR, "minervini_screener.csv"), index=False, encoding="utf-8-sig")
     result_df.to_json(os.path.join(RESULT_DIR, "minervini_screener.json"), orient="records", force_ascii=False)
 
 

@@ -8,14 +8,14 @@ from typing import Any
 
 import pandas as pd
 
-from screener_utils import ensure_pykrx, load_market_caps, relative_strength
+from screener_utils import ensure_pykrx, load_market_caps, relative_strength, get_ticker_name
 
 
 DATA_DIR = "data"
 RESULT_DIR = "result"
 
 
-def setup_screener(df: pd.DataFrame, cap: float) -> bool:
+def setup_screener(df: pd.DataFrame, cap: float, ticker: str = None) -> bool:
     """Return ``True`` if ``df`` satisfies the setup screener criteria."""
     if df.empty:
         return False
@@ -59,6 +59,11 @@ def setup_screener(df: pd.DataFrame, cap: float) -> bool:
     bb_upper = ma20 + 2 * std20
     if bb_upper <= price:
         return False
+        
+    # RS 점수가 70점 미만이면 필터링
+    from screener_utils import relative_strength
+    if relative_strength(df, ticker) < 70:  # 70점 이상만 통과
+        return False
 
     return True
 
@@ -69,6 +74,10 @@ def run() -> None:
 
     today = datetime.today()
     caps = load_market_caps(today)
+
+    # 모든 종목의 RS 점수 계산
+    from screener_utils import calculate_all_rs_scores
+    calculate_all_rs_scores()
 
     rows: list[dict[str, Any]] = []
 
@@ -87,13 +96,17 @@ def run() -> None:
 
         cap = caps.get(ticker, 0.0)
 
-        if setup_screener(df, cap):
-            rows.append({"ticker": ticker, "relative_strength": relative_strength(df)})
+        if setup_screener(df, cap, ticker):
+            rows.append({
+                "ticker": ticker, 
+                "name": get_ticker_name(ticker),
+                "relative_strength": relative_strength(df, ticker)
+            })
 
     os.makedirs(RESULT_DIR, exist_ok=True)
 
     result_df = pd.DataFrame(rows).sort_values("relative_strength", ascending=False)
-    result_df.to_csv(os.path.join(RESULT_DIR, "setup_screener.csv"), index=False)
+    result_df.to_csv(os.path.join(RESULT_DIR, "setup_screener.csv"), index=False, encoding="utf-8-sig")
     result_df.to_json(os.path.join(RESULT_DIR, "setup_screener.json"), orient="records", force_ascii=False)
 
 
