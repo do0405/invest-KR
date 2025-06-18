@@ -16,8 +16,11 @@ from minervini_screener import minervini_screener
 DATA_DIR = "data"
 RESULT_DIR = "result"
 
-# 재무제표 데이터 캐시
-FINANCIAL_DATA_CACHE = {}
+# 재무제표 및 기업 정보 캐시
+FINANCIAL_DATA_CACHE: Dict[str, Dict] = {}
+CORP_LIST = None
+CORP_CODE_CACHE: Dict[str, str] = {}
+CORP_OBJ_CACHE: Dict[str, Any] = {}
 
 
 def setup_dart_api():
@@ -48,16 +51,28 @@ def setup_dart_api():
     
     # API 키 설정
     dart.set_api_key(api_key)
+
+    # 기업 목록을 미리 로딩하여 성능 향상
+    global CORP_LIST
+    try:
+        CORP_LIST = dart.get_corp_list()
+    except Exception as e:  # noqa: BLE001
+        print(f"Error loading corp list: {e}")
+
     return True
 
 
 def get_corp_code(ticker: str) -> Optional[str]:
     """Get the corporation code for the given ticker."""
+    if ticker in CORP_CODE_CACHE:
+        return CORP_CODE_CACHE[ticker]
+
+    global CORP_LIST
     try:
-        # 회사 목록 가져오기
-        corp_list = dart.get_corp_list()
-        # 티커로 회사 찾기
-        corps = corp_list.find_by_stock_code(ticker)
+        if CORP_LIST is None:
+            CORP_LIST = dart.get_corp_list()
+
+        corps = CORP_LIST.find_by_stock_code(ticker)
         
         # corps가 None인 경우 처리
         if corps is None:
@@ -65,20 +80,22 @@ def get_corp_code(ticker: str) -> Optional[str]:
             return None
             
         # corps가 리스트 또는 이터러블인 경우
-        if hasattr(corps, '__iter__') and not isinstance(corps, str):
+        if hasattr(corps, "__iter__") and not isinstance(corps, str):
             try:
                 if len(corps) > 0:
-                    return corps[0].corp_code
+                    corp_code = corps[0].corp_code
                 else:
                     print(f"Empty corporation list for ticker {ticker}")
                     return None
-            except TypeError as e:
+            except TypeError:
                 # corps가 이터러블이지만 len()을 지원하지 않는 경우
-                # 단일 객체로 처리
-                return corps.corp_code
+                corp_code = corps.corp_code
         else:
             # corps가 단일 객체인 경우
-            return corps.corp_code
+            corp_code = corps.corp_code
+
+        CORP_CODE_CACHE[ticker] = corp_code
+        return corp_code
     except Exception as e:
         print(f"Error getting corporation code for {ticker}: {e}")
     return None
@@ -97,31 +114,37 @@ def get_financial_statements(corp_code: str, years: int = 3) -> Dict:
         # 현재 날짜 기준으로 과거 데이터 가져오기
         end_date = datetime.now()
         start_date = end_date - timedelta(days=365 * years)
-        
+
+        global CORP_LIST
+        if CORP_LIST is None:
+            CORP_LIST = dart.get_corp_list()
+
         # 회사 객체 가져오기
-        corp_list = dart.get_corp_list()
-        corps = corp_list.find_by_corp_code(corp_code)
-        
-        # corps가 None이거나 빈 리스트인 경우 처리
-        if not corps:
-            print(f"No corporation found for corp_code {corp_code}")
-            return {}
-            
-        # corps가 리스트 또는 이터러블인 경우
-        if hasattr(corps, '__iter__') and not isinstance(corps, str):
-            try:
-                if len(corps) > 0:
-                    corp = corps[0]
-                else:
-                    print(f"Empty corporation list for corp_code {corp_code}")
-                    return {}
-            except TypeError:
-                # corps가 이터러블이지만 len()을 지원하지 않는 경우
-                # 단일 객체로 처리
+        corp = CORP_OBJ_CACHE.get(corp_code)
+        if corp is None:
+            corps = CORP_LIST.find_by_corp_code(corp_code)
+
+            # corps가 None이거나 빈 리스트인 경우 처리
+            if not corps:
+                print(f"No corporation found for corp_code {corp_code}")
+                return {}
+
+            # corps가 리스트 또는 이터러블인 경우
+            if hasattr(corps, "__iter__") and not isinstance(corps, str):
+                try:
+                    if len(corps) > 0:
+                        corp = corps[0]
+                    else:
+                        print(f"Empty corporation list for corp_code {corp_code}")
+                        return {}
+                except TypeError:
+                    # corps가 이터러블이지만 len()을 지원하지 않는 경우
+                    corp = corps
+            else:
+                # corps가 단일 객체인 경우
                 corp = corps
-        else:
-            # corps가 단일 객체인 경우
-            corp = corps
+
+            CORP_OBJ_CACHE[corp_code] = corp
         
         # 필요한 정보만 추출하기 위한 설정
         required_statements = {
@@ -150,7 +173,7 @@ def get_financial_statements(corp_code: str, years: int = 3) -> Dict:
             FINANCIAL_DATA_CACHE[corp_code] = filtered_fs
             
             # API 호출 제한 방지를 위한 딜레이
-            time.sleep(0.5)
+            time.sleep(0.2)
             
             return filtered_fs
         except Exception as e:
@@ -209,28 +232,28 @@ def check_financial_criteria(ticker: str) -> bool:
                 return False
             
             # 최근 3분기의 증가율 계산
-            eps_growth_rates = []
+            eps_growth_rates: List[float] = []
             for i in range(1, 4):
                 current_eps = quarterly_eps.iloc[0, -i]
-                prev_eps = quarterly_eps.iloc[0, -(i+1)]
-                
+                prev_eps = quarterly_eps.iloc[0, -(i + 1)]
+
                 # EPS가 음수에서 양수로 변경된 경우 100% 성장으로 간주
                 if prev_eps <= 0 and current_eps > 0:
-                    growth_rate = 100
+                    growth_rate = 100.0
                 # 이전 EPS가 0이면 성장률 계산 불가
                 elif prev_eps == 0:
-                    growth_rate = 0 if current_eps == 0 else 100
+                    growth_rate = 100.0 if current_eps != 0 else 0.0
                 else:
-                    growth_rate = ((current_eps - prev_eps) / abs(prev_eps)) * 100
-                
+                    growth_rate = ((current_eps - prev_eps) / abs(prev_eps)) * 100.0
+
                 eps_growth_rates.append(growth_rate)
-            
-            # 최근 분기 EPS 증가율이 25% 미만이면 탈락
-            if eps_growth_rates[0] < 25:
+
+            # 모든 분기의 증가율이 25% 이상이어야 함
+            if any(rate < 25 for rate in eps_growth_rates):
                 return False
-            
-            # 최소 2분기 연속 가속화 확인
-            if not (eps_growth_rates[0] > eps_growth_rates[1] and eps_growth_rates[1] > eps_growth_rates[2]):
+
+            # 최소 2분기 연속 가속화 확인 (최근 분기일수록 성장률이 높아야 함)
+            if not (eps_growth_rates[0] > eps_growth_rates[1] > eps_growth_rates[2]):
                 return False
         except Exception as e:
             print(f"{ticker}: EPS 데이터 분석 중 오류 발생 - {e}")
@@ -288,24 +311,24 @@ def check_financial_criteria(ticker: str) -> bool:
                 return False
             
             # 최근 3분기의 증가율 계산
-            revenue_growth_rates = []
+            revenue_growth_rates: List[float] = []
             for i in range(1, 4):
                 current_revenue = quarterly_revenue.iloc[0, -i]
-                prev_revenue = quarterly_revenue.iloc[0, -(i+1)]
-                
+                prev_revenue = quarterly_revenue.iloc[0, -(i + 1)]
+
                 if prev_revenue == 0:
-                    growth_rate = 0 if current_revenue == 0 else 100
+                    growth_rate = 100.0 if current_revenue != 0 else 0.0
                 else:
-                    growth_rate = ((current_revenue - prev_revenue) / abs(prev_revenue)) * 100
-                
+                    growth_rate = ((current_revenue - prev_revenue) / abs(prev_revenue)) * 100.0
+
                 revenue_growth_rates.append(growth_rate)
-            
-            # 최근 분기 매출 증가율이 25% 미만이면 탈락
-            if revenue_growth_rates[0] < 25:
+
+            # 모든 분기의 증가율이 25% 이상이어야 함
+            if any(rate < 25 for rate in revenue_growth_rates):
                 return False
-            
+
             # 최소 2분기 연속 가속화 확인
-            if not (revenue_growth_rates[0] > revenue_growth_rates[1] and revenue_growth_rates[1] > revenue_growth_rates[2]):
+            if not (revenue_growth_rates[0] > revenue_growth_rates[1] > revenue_growth_rates[2]):
                 return False
         except Exception as e:
             print(f"{ticker}: 매출 데이터 분석 중 오류 발생 - {e}")
